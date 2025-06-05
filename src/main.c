@@ -183,9 +183,20 @@ int main(void)
                     if (strcmp(match_buffer, "HD_START") == 0)
                     {
                         state = 1;
+                        match_buffer[0] = '\0'; // Buffer leeren
                         match_index = 0;
-                        //LOG("DH_START_KRAPFEN\n");
-                        //break;
+                    } else if (strncmp(match_buffer, "HD_CS_", 5) == 0)
+                    {
+                        state = 2;
+                        match_index = 0;
+                    } else if (strncmp(match_buffer, "HD_BOOM_", 7) == 0)
+                    {
+                        state = 3;
+                        match_index = 0;
+                    } else if ((strncmp(match_buffer, "HD_BOOM_", 7) == 0) && (state == 3))
+                    {
+                        state = 4;
+                        match_index = 0;
                     }
                     else
                     {
@@ -196,38 +207,45 @@ int main(void)
                         }
                         match_index--; // wieder Platz am Ende
                     }
-                    //LOG("STATE %d \n", state);
                 }
-            
-           /* switch (state){
-            case 1:
-                LOG("DH_START_KRAPFEN\n");
-                state++;
-                break;
 
-            case 2: 
-                LOG("DH_CS_5262123504\n");
-                state++;
-                break; 
-            }*/
             bytes_recv++;
         }
-
+        // switch case for the state model
         switch (state){
+            // Receiving/sending start message
             case 1:
-                LOG("DH_START_KRAPFEN\n");
-                state++;
+                LOG("DH_START_Krapfen\n");
+                state = 0;
                 break;
 
             case 2: 
+                // sum = checksum();
                 LOG("DH_CS_5262123504\n");
                 state = 0;
                 break;
+            
+            case 3:
+                // hit = check_hit();   // !! \n has to be in hit !!    // hit is a string consisting of either "M\n" or "H\n"
+                // LOG("DH_BOOM_"+hit);
+                LOG("DH_BOOM_H\n");
+                // shot = int_shoot(); // !! \n has to be in shoot !!  // shot is a string consisting of coordinates "x_y\n" of target
+                // LOG("DH_BOOM_"+shot);
+                // state = 0;
+                break;
+            case 4:
+                // mark = mark_shot();  // mark is a string consisting of either "F\n", "N\n" or "0"
+                //state = 0;
+                // if (mark != 0){
+                    // LOG("DH_"+mark); //  !! \n has to be in mark !!
+                    // state = 0;
+                    // }
                 
+                LOG("DH_F\n");
+                break;
         }
 
         //LOG("DH_START_KRAPFEN\n");
-        
     }
     return 0;
 }
