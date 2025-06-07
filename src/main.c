@@ -13,7 +13,7 @@ const uint8_t USART2_RX_PIN = 3;
 const uint8_t USART2_TX_PIN = 2;
 
 #define TARGET_LEN 9
-char match_buffer[TARGET_LEN] = {0};  // Empfangspuffer
+char match_buffer[TARGET_LEN] = {0};
 uint8_t match_index = 0;
 
 /** =================================================
@@ -83,7 +83,27 @@ void UART_INIT()
 /**
  * @brief Generates field constellation of ships
  * @return battlefield as int array
- 
+*/
+// This function generates a constant field for the game
+int field[100] = {
+        0, 0, 0, 5, 5, 5, 5, 5, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        2, 0, 0, 0, 3, 3, 3, 0, 0, 0,
+        2, 0, 0, 0, 0, 0, 0, 0, 4, 0,
+        0, 0, 3, 3, 3, 0, 0, 0, 4, 0,
+        3, 0, 0, 0, 0, 0, 0, 0, 4, 0,
+        3, 0, 2, 2, 0, 0, 0, 0, 4, 0,
+        3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 4, 4, 4, 4, 0, 2, 0, 2,
+        0, 0, 0, 0, 0, 0, 0, 2, 0, 2
+    };
+ // constant field
+ int *generate_field(){
+    return field;
+ }
+
+/*
+ // random field
 int generate_field(){
     //int field[100] = 0;
     int ShipSize = 5;
@@ -99,19 +119,39 @@ int generate_field(){
 /**
  * @brief Calculates checksum of battlefield
  * @return checksum
-int checksum(int *field){
-    int size;
-    size = sizeof(&field);
+ */
 
-    return 0;
+// checksum_string function to convert the checksum into a string
+void checksum_string(int *field, char *output) {
+    for (int row = 0; row < 10; row++) {
+        int count = 0;
+        for (int col = 0; col < 10; col++) {
+            if (field[row * 10 + col] != 0) {
+                count++;
+            }
+        }
+        // write the count to the output string
+        output[row] = '0' + count;
+    }
+    output[10] = '\0';
 }
-*/ 
-
 
 /**
    * @brief Algorithm for shooting 
-   * @return coords[array[10x10]], target coords x and y
-
+   * @return target coords x and y
+*/
+int enemy_field[100] = {0};
+void shoot(int *enemy_field, int *x, int *y){
+    for (int i = 0; i < 100; i++){
+        if((enemy_field[i] != 1) && (enemy_field[i] != 2) && (enemy_field[i] != 3)){ // 1 is water, 2 is hit, 3 is pending shot
+            // if the field is not empty, return the coordinates
+            *x = i % 10; // x coordinate
+            *y = i / 10; // y coordinate
+            break;
+        }
+    }
+}
+/*
 int int_shoot(int coords){
     // coords is a array including the 10x10 field
 
@@ -131,22 +171,7 @@ int int_shoot(int coords){
 int main(void)
 {
     SystemClock_Config();
-    //UART_INIT();
-
-    RCC->AHBENR |= RCC_AHBENR_GPIOAEN;    // Enable GPIOA clock
-    RCC->APB1ENR |= RCC_APB1ENR_USART2EN; // Enable USART2 clock
-
-    // ---------------- UART TX Pin Configuration (PA2) ----------------
-    GPIOA->MODER |= 0b10 << (USART2_TX_PIN * 2);    // Set PA2 to Alternate Function mode
-    GPIOA->AFR[0] |= 0b0001 << (4 * USART2_TX_PIN); // Set AF for PA2 (USART2_TX)
-    GPIOA->MODER |= 0b10 << (USART2_RX_PIN * 2);    // Set PA3 to Alternate Function mode
-    GPIOA->AFR[0] |= 0b0001 << (4 * USART2_RX_PIN); // Set AF for PA3 (USART2_RX)
-
-    USART2->BRR = (APB_FREQ / BAUDRATE); // Set baud rate (requires APB_FREQ to be defined)
-    USART2->CR1 |= 0b1 << 2;             // Enable receiver (RE bit)
-    USART2->CR1 |= 0b1 << 3;             // Enable transmitter (TE bit)
-    USART2->CR1 |= 0b1 << 0;             // Enable USART (UE bit)
-    USART2->CR1 |= 0b1 << 5;             // Enable RXNE interrupt (RXNEIE bit)
+    UART_INIT();
 
     NVIC_SetPriorityGrouping(0);                               // Use 4 bits for priority, 0 bits for subpriority
     uint32_t uart_pri_encoding = NVIC_EncodePriority(0, 1, 0); // Encode priority: group 1, subpriority 0
@@ -160,6 +185,10 @@ int main(void)
     // Case switch
     int state = 0;
 
+    // Initialize field and checksum
+    char checksum_str[11];
+    checksum_string((int *)generate_field(), checksum_str);
+
     int ret; 
     // main loop
     for(;;)
@@ -170,20 +199,20 @@ int main(void)
         {  
             //LOG("[Test] "); 
             
-            // Charakter an richtiger Stelle speichern
+            // Save byte in match_buffer
             match_buffer[match_index] = byte;
             match_index++;
 
+            //if((byte == '\n') || (byte == '\r'))
+            //{
                 // Wenn Buffer voll -> prüfen
                 if (match_index == TARGET_LEN - 1)
                 {
-                    match_buffer[match_index] = '\0'; // Nullterminieren
-                    //LOG("%s\n", match_buffer);
-                    
+                    match_buffer[match_index] = '\0';
+
                     if (strcmp(match_buffer, "HD_START") == 0)
                     {
                         state = 1;
-                        match_buffer[0] = '\0'; // Buffer leeren
                         match_index = 0;
                     } else if (strncmp(match_buffer, "HD_CS_", 5) == 0)
                     {
@@ -191,25 +220,40 @@ int main(void)
                         match_index = 0;
                     } else if (strncmp(match_buffer, "HD_BOOM_", 7) == 0)
                     {
-                        state = 3;
+                        if(match_buffer[8] == 'M' || match_buffer[8] == 'H')
+                        {
+                            state = 4; // Hit or Miss
+                        }
+                        else
+                        {
+                            state = 3; // Shoot
+                        }
                         match_index = 0;
-                    } else if ((strncmp(match_buffer, "HD_BOOM_", 7) == 0) && (state == 3))
+                    } else if (strncmp(match_buffer, "HD_SF", 5) == 0)
                     {
-                        state = 4;
+                        if(match_buffer[6] != '9'){
+                            state = 0;
+                        } else if(match_buffer[6] == '9')
+                        {
+                            // Win or Loss
+                            state = 5;
+                            
+                        }
                         match_index = 0;
                     }
                     else
                     {
-                        // Nachricht passt nicht -> Buffer verschieben um 1 (FIFO-like Verhalten)
+                        // Unrecognized command, reset match_index
                         for (uint8_t i = 0; i < TARGET_LEN - 2; i++)
                         {
                             match_buffer[i] = match_buffer[i + 1];
                         }
-                        match_index--; // wieder Platz am Ende
+                        match_index--; // Decrease index to reflect the shift
                     }
                 }
-
+            //}
             bytes_recv++;
+            
         }
         // switch case for the state model
         switch (state){
@@ -220,32 +264,54 @@ int main(void)
                 break;
 
             case 2: 
-                // sum = checksum();
-                LOG("DH_CS_5262123504\n");
+                LOG("DH_CS_%s\n", checksum_str);
+                //LOG("DH_CS_5262123504\n");
                 state = 0;
                 break;
             
             case 3:
-                // hit = check_hit();   // !! \n has to be in hit !!    // hit is a string consisting of either "M\n" or "H\n"
-                // LOG("DH_BOOM_"+hit);
+                // hit = check_hit();   // hit is a string consisting of either "M\n" or "H\n"
+                // LOG("DH_BOOM_%s\n",hit);
                 LOG("DH_BOOM_H\n");
-                // shot = int_shoot(); // !! \n has to be in shoot !!  // shot is a string consisting of coordinates "x_y\n" of target
-                // LOG("DH_BOOM_"+shot);
-                // state = 0;
+                // shot = int_shoot(); // shot is a string consisting of coordinates "x_y\n" of target
+                int x = 0;
+                int y = 0;
+                shoot(enemy_field, &x, &y);
+                enemy_field[y * 10 + x] = 3; // pending shot
+                LOG("DH_BOOM_%d_%d\n", x, y);
+                state = 0;
                 break;
             case 4:
-                // mark = mark_shot();  // mark is a string consisting of either "F\n", "N\n" or "0"
-                //state = 0;
-                // if (mark != 0){
-                    // LOG("DH_"+mark); //  !! \n has to be in mark !!
-                    // state = 0;
-                    // }
+                // Check if Hit or Miss has been send correctly
+                if (match_buffer[8] == 'H')
+                {
+                    // Update enemy field to mark hit
+                    enemy_field[y * 10 + x] = 2; // 2 for hit
+                }
+                else
+                {
+                    // Update enemy field to mark miss
+                    enemy_field[y * 10 + x] = 1; // 1 for water
+                }
+                state = 0;
+                break;
+            case 5:
+            // Send final field
+                LOG("DH_SF_");
+                for(int i = 0; i < 10; i++)
+                {
+                    LOG("%d", i);
+                    for(int j = 0; j < 10; j++)
+                    {
+                        LOG("%d", field[i * 10 + j]);
+                    }
+                }
+                LOG("\n");
                 
-                LOG("DH_F\n");
+                state = 0;
                 break;
         }
 
-        //LOG("DH_START_KRAPFEN\n");
     }
     return 0;
 }
