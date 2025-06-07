@@ -12,7 +12,7 @@ volatile Fifo_t usart_rx_fifo;
 const uint8_t USART2_RX_PIN = 3;
 const uint8_t USART2_TX_PIN = 2;
 
-#define TARGET_LEN 9
+#define TARGET_LEN 20
 char match_buffer[TARGET_LEN] = {0};
 uint8_t match_index = 0;
 
@@ -203,55 +203,51 @@ int main(void)
             match_buffer[match_index] = byte;
             match_index++;
 
-            //if((byte == '\n') || (byte == '\r'))
-            //{
-                // Wenn Buffer voll -> prüfen
-                if (match_index == TARGET_LEN - 1)
-                {
-                    match_buffer[match_index] = '\0';
+            if(byte == '\n') // || (byte == '\r'))
+            {
+            
+                match_buffer[match_index] = '\0';
 
-                    if (strcmp(match_buffer, "HD_START") == 0)
+                if (strncmp(match_buffer, "HD_START", 8) == 0)
+                {
+                    state = 1;
+                } else if (strncmp(match_buffer, "HD_CS_", 5) == 0)
+                {
+                    state = 2;
+                } else if (strncmp(match_buffer, "HD_BOOM_", 7) == 0)
+                {
+                    if(match_buffer[8] == 'M' || match_buffer[8] == 'H')
                     {
-                        state = 1;
-                        match_index = 0;
-                    } else if (strncmp(match_buffer, "HD_CS_", 5) == 0)
-                    {
-                        state = 2;
-                        match_index = 0;
-                    } else if (strncmp(match_buffer, "HD_BOOM_", 7) == 0)
-                    {
-                        if(match_buffer[8] == 'M' || match_buffer[8] == 'H')
-                        {
-                            state = 4; // Hit or Miss
-                        }
-                        else
-                        {
-                            state = 3; // Shoot
-                        }
-                        match_index = 0;
-                    } else if (strncmp(match_buffer, "HD_SF", 5) == 0)
-                    {
-                        if(match_buffer[6] != '9'){
-                            state = 0;
-                        } else if(match_buffer[6] == '9')
-                        {
-                            // Win or Loss
-                            state = 5;
-                            
-                        }
-                        match_index = 0;
+                        state = 4; // Hit or Miss
                     }
                     else
                     {
-                        // Unrecognized command, reset match_index
-                        for (uint8_t i = 0; i < TARGET_LEN - 2; i++)
-                        {
-                            match_buffer[i] = match_buffer[i + 1];
-                        }
-                        match_index--; // Decrease index to reflect the shift
+                        state = 3; // Shoot
+                    }
+                } else if (strncmp(match_buffer, "HD_SF", 5) == 0)
+                {
+                    if(match_buffer[5] == '9')
+                    {
+                        // Win or Loss
+                        state = 5; 
+                    } else
+                    {
+                        state = 0;
                     }
                 }
-            //}
+                
+                /*else
+                {
+                    // Unrecognized command, reset match_index
+                    for (uint8_t i = 0; i < TARGET_LEN - 2; i++)
+                    {
+                        match_buffer[i] = match_buffer[i + 1];
+                    }
+                    match_index--; // Decrease index to reflect the shift
+                }
+                    */
+                match_index = 0;
+            }
             bytes_recv++;
             
         }
@@ -297,16 +293,15 @@ int main(void)
                 break;
             case 5:
             // Send final field
-                LOG("DH_SF_");
                 for(int i = 0; i < 10; i++)
                 {
-                    LOG("%d", i);
+                    LOG("DH_SF_%dD", i);
                     for(int j = 0; j < 10; j++)
                     {
                         LOG("%d", field[i * 10 + j]);
                     }
+                    LOG("\n");
                 }
-                LOG("\n");
                 
                 state = 0;
                 break;
