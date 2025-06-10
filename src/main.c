@@ -2,19 +2,27 @@
 #include "clock_.h"
 #include "fifo.h"
 
-/**
-    @brief Declaration of all global variables
-*/
+/** =================================================
+ * 
+ *      Declaration of global variables
+ * 
+ ====================================================*/
+ // Baudrate and LOG function
 #define BAUDRATE 115200
 #define LOG( msg... ) printf( msg );
 
-volatile Fifo_t usart_rx_fifo;
+// PINs for Receiver and Transmitter
 const uint8_t USART2_RX_PIN = 3;
 const uint8_t USART2_TX_PIN = 2;
 
+// FIFO variables
+volatile Fifo_t usart_rx_fifo;
 #define TARGET_LEN 20
 char match_buffer[TARGET_LEN] = {0};
 uint8_t match_index = 0;
+
+// Field constants
+#define FIELD_SIZE 100
 
 /** =================================================
  * 
@@ -85,7 +93,7 @@ void UART_INIT()
  * @return battlefield as int array
 */
 // This function generates a constant field for the game
-int field[100] = {
+int field[FIELD_SIZE] = {
         0, 0, 0, 5, 5, 5, 5, 5, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         2, 0, 0, 0, 3, 3, 3, 0, 0, 0,
@@ -96,7 +104,15 @@ int field[100] = {
         3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 4, 4, 4, 4, 0, 2, 0, 2,
         0, 0, 0, 0, 0, 0, 0, 2, 0, 2
-    };
+};
+int field_copy[FIELD_SIZE];
+void init_field_copy() {
+    // Initialize the copy of the field with the same values as the original field
+    for(int i = 0; i < 100; i++) {
+        field_copy[i] = field[i];
+    }
+}
+
  // constant field
  int *generate_field(){
     return field;
@@ -104,17 +120,43 @@ int field[100] = {
 
 /*
  // random field
-int generate_field(){
+int *generate_field(){
     //int field[100] = 0;
-    int ShipSize = 5;
+    int ShipSize = 6; // 5 (biggest shipsize) + 1 (amount of biggest ship)
+    int FieldSize = 100;
+    int x = 0;
+    int y = 0;
 
-    for(int i = 2; i<ShipSize+1; i++){
-        
+    for(int length = 2; length<ShipSize; length++)
+    {
+        int amount = ShipSize-length;
+            if(amount > 0) // && (!valid_field(x,y,length)) // && ((field[x-1 + y*10] == length) ||  (field[x+1 + y*10] == length) || (field[x + (y-1)*10] == length) || (field[x + (y+1)*10] == length))
+            {
+                /**
+                field[x + y*10] = length;
+                
+                amount--;
+            }
+
     }
 
     return 0;
 }
 */
+
+int valid_field(int coord_x, int coord_y, int length)
+{
+    if(((field[coord_x-1 + coord_y*10] == length) ||  (field[coord_x+1 + coord_y*10] == length) || (field[coord_x + (coord_y-1)*10] == length) || (field[coord_x + (coord_y+1)*10] == length)))
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+
 
 /**
  * @brief Calculates checksum of battlefield
@@ -140,9 +182,9 @@ void checksum_string(int *field, char *output) {
    * @brief Algorithm for shooting 
    * @return target coords x and y
 */
-int enemy_field[100] = {0};
-void shoot(int *enemy_field, int *x, int *y){
-    for (int i = 0; i < 100; i++){
+int enemy_field[FIELD_SIZE] = {0};
+void shoot(int *enemy_field, int *x, int *y){   // BUG: If game starts over x and y are constant 9
+    for (int i = 0; i < FIELD_SIZE; i++){
         if((enemy_field[i] != 1) && (enemy_field[i] != 2) && (enemy_field[i] != 3)){ // 1 is water, 2 is hit, 3 is pending shot
             // if the field is not empty, return the coordinates
             *x = i % 10; // x coordinate
@@ -151,18 +193,27 @@ void shoot(int *enemy_field, int *x, int *y){
         }
     }
 }
-/*
-int int_shoot(int coords){
-    // coords is a array including the 10x10 field
 
-    // x,y coordinates of target
-    //uint8_t x = 0;
-    uint8_t y = 0;
-
-    // return modified array with x and y of new target
-    return y;
+void reset_enemyfield()
+{
+    for(int i = 0; i<FIELD_SIZE; i++)
+    {
+        enemy_field[i] = 0;
+    }
 }
-*/
+
+/**
+ * @brief Checks if the shot was a hit or miss
+ * @return "H" for hit or "M" for miss
+ */
+char* check_hit(int x, int y) {
+    if (field[y * 10 + x] != 0) {
+        field_copy[y * 10 + x] = 0; // Mark as hit
+        return "H";
+    } else {
+        return "M";
+    }
+}
 
 /*
     @brief main function
@@ -186,8 +237,15 @@ int main(void)
     int state = 0;
 
     // Initialize field and checksum
+    //init_field_copy();
     char checksum_str[11];
+    // Has to be put inside the case state as soon as field generates randomly
     checksum_string((int *)generate_field(), checksum_str);
+    
+    // coordinates for the battlefield
+    int x_received = 0;
+    int y_received = 0;
+
 
     int ret; 
     // main loop
@@ -196,9 +254,8 @@ int main(void)
         uint8_t byte;
         ret = fifo_get((Fifo_t *)&usart_rx_fifo, &byte) == 0;
         if (ret)
-        {  
-            //LOG("[Test] "); 
-            
+        //if(fifo_get((Fifo_t *)&usart_rx_fifo, &byte) == 0)
+        {              
             // Save byte in match_buffer
             match_buffer[match_index] = byte;
             match_index++;
@@ -221,7 +278,9 @@ int main(void)
                         state = 4; // Hit or Miss
                     }
                     else
-                    {
+                    { 
+                        // Extract coordinates from match_buffer
+                        sscanf(match_buffer, "HD_BOOM_%d_%d", &x_received, &y_received);
                         state = 3; // Shoot
                     }
                 } else if (strncmp(match_buffer, "HD_SF", 5) == 0)
@@ -235,17 +294,11 @@ int main(void)
                         state = 0;
                     }
                 }
-                
-                /*else
+                else
                 {
-                    // Unrecognized command, reset match_index
-                    for (uint8_t i = 0; i < TARGET_LEN - 2; i++)
-                    {
-                        match_buffer[i] = match_buffer[i + 1];
-                    }
-                    match_index--; // Decrease index to reflect the shift
+                    LOG("Unknown command: %s\n", match_buffer);
+                    state = 0; // Reset state for unknown commands
                 }
-                    */
                 match_index = 0;
             }
             bytes_recv++;
@@ -256,27 +309,44 @@ int main(void)
             // Receiving/sending start message
             case 1:
                 LOG("DH_START_Krapfen\n");
+                init_field_copy();
+                reset_enemyfield();
                 state = 0;
                 break;
-
+            // Sending checksum
             case 2: 
                 LOG("DH_CS_%s\n", checksum_str);
-                //LOG("DH_CS_5262123504\n");
                 state = 0;
                 break;
-            
+            // Shooting phase | Check if Hit or Miss and send coordinates of target
             case 3:
-                // hit = check_hit();   // hit is a string consisting of either "M\n" or "H\n"
-                // LOG("DH_BOOM_%s\n",hit);
-                LOG("DH_BOOM_H\n");
-                // shot = int_shoot(); // shot is a string consisting of coordinates "x_y\n" of target
+                LOG("DH_BOOM_%s\n", check_hit(x_received, y_received));
+                //LOG("[HIT] %d x | %d y", x_received, y_received);
+                
+                // =================== DEBUG ================
+                /*
+                char checkloss[11];
+                
+                checksum_string((int *)field_copy, checkloss);
+                
+                if(strcmp(checkloss,"0000000000") == 0)
+                {
+                    //LOG("[CHECK] %s\n", checkloss);
+                    state = 5;
+                    //match_index = 0;
+                    break;
+                }
+                */
+                // =================== DEBUG ================
                 int x = 0;
                 int y = 0;
                 shoot(enemy_field, &x, &y);
                 enemy_field[y * 10 + x] = 3; // pending shot
+                
                 LOG("DH_BOOM_%d_%d\n", x, y);
                 state = 0;
                 break;
+            // Receiving Hit or Miss and updating enemy field
             case 4:
                 // Check if Hit or Miss has been send correctly
                 if (match_buffer[8] == 'H')
@@ -291,22 +361,21 @@ int main(void)
                 }
                 state = 0;
                 break;
+            // Sending final field and win message
             case 5:
             // Send final field
                 for(int i = 0; i < 10; i++)
                 {
-                    LOG("DH_SF_%dD", i);
+                    LOG("DH_SF%dD", i);
                     for(int j = 0; j < 10; j++)
                     {
                         LOG("%d", field[i * 10 + j]);
                     }
                     LOG("\n");
                 }
-                
                 state = 0;
                 break;
         }
-
     }
     return 0;
 }
