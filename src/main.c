@@ -1,6 +1,119 @@
 #include <stm32f091xc.h>
-#include "clock_.h"
-#include "fifo.h"
+#include <string.h>
+#include <stdio.h>
+
+/** =====================================
+ * 
+ *          FIFO Configuration
+ * 
+ ========================================*/
+#define FIFO_SIZE 64
+#define FIFO_ERROR -1
+
+typedef struct {
+    uint8_t buffer[FIFO_SIZE];
+    uint16_t head;
+    uint16_t tail;
+} Fifo_t;
+
+void fifo_init(Fifo_t* fifo);
+int fifo_put(Fifo_t* fifo, uint8_t data);
+int fifo_get(Fifo_t* fifo, uint8_t* data);
+
+void fifo_init(Fifo_t* fifo) {
+    fifo->head = 0;                              // Initialize head pointer to 0
+    fifo->tail = 0;                              // Initialize tail pointer to 0
+}
+
+uint8_t fifo_is_empty(Fifo_t* fifo) {
+    return (fifo->head == fifo->tail);          // FIFO is empty if head and tail are equal
+}
+
+uint8_t fifo_is_full(Fifo_t* fifo) {
+    return ((fifo->head + 1) % FIFO_SIZE) == fifo->tail; // FIFO is full if incrementing head would equal tail
+}
+
+int fifo_put(Fifo_t* fifo, uint8_t data) {
+    if (fifo_is_full(fifo)) {                   // Check if FIFO is full before inserting
+        return -1;                               // Insertion failed (buffer full)
+    }
+
+    fifo->buffer[fifo->head] = data;            // Store data at current head position
+    fifo->head = (fifo->head + 1) % FIFO_SIZE;  // Move head forward and wrap around if needed
+    return 0;                                   // Insertion successful
+}
+
+int fifo_get(Fifo_t* fifo, uint8_t* data) {
+    if (fifo_is_empty(fifo)) {                  // Check if FIFO is empty before reading
+        return -1;                               // Read failed (buffer empty)
+    }
+
+    *data = fifo->buffer[fifo->tail];           // Retrieve data at current tail position
+    fifo->tail = (fifo->tail + 1) % FIFO_SIZE;  // Move tail forward and wrap around if needed
+    return 0;                          // Read successful Return 0
+}
+
+// FIFO variables
+volatile Fifo_t usart_rx_fifo;
+#define TARGET_LEN 20
+char match_buffer[TARGET_LEN] = {0};
+uint8_t match_index = 0;
+
+/**======================================
+ * 
+ *          Clock Configuration
+ * 
+========================================= */
+#ifndef EPL_CLOCK_H
+#define EPL_CLOCK_H
+
+#define APB_FREQ 48000000
+#define AHB_FREQ 48000000
+
+void SystemClock_Config(void);
+
+#endif // EPL_CLOCK_H
+
+/**
+ * @brief  System Clock Configuration
+ *         The system Clock is configured as follow :
+ *            System Clock source            = PLL (HSI48)
+ *            SYSCLK(Hz)                     = 48000000
+ *            HCLK(Hz)                       = 48000000
+ *            AHB Prescaler                  = 1
+ *            APB1 Prescaler                 = 1
+ *            HSI Frequency(Hz)              = 48000000
+ *            Flash Latency(WS)              = 1
+ * @param  None
+ * @retval None
+ */
+void SystemClock_Config(void)
+{
+  // Reset the Flash 'Access Control Register', and
+  // then set 1 wait-state and enable the prefetch buffer.
+  // (The device header files only show 1 bit for the F0
+  //  line, but the reference manual shows 3...)
+  FLASH->ACR &= ~(FLASH_ACR_LATENCY_Msk | FLASH_ACR_PRFTBE_Msk);
+  FLASH->ACR |= (FLASH_ACR_LATENCY |
+                 FLASH_ACR_PRFTBE);
+
+  // activate the internal 48 MHz clock
+  RCC->CR2 |= RCC_CR2_HSI48ON;
+
+  // wait for clock to become stable before continuing
+  while (!(RCC->CR2 & RCC_CR2_HSI48RDY))
+    ;
+
+  // configure the clock switch
+  RCC->CFGR = RCC->CFGR & ~RCC_CFGR_HPRE_Msk;
+  RCC->CFGR = RCC->CFGR & ~RCC_CFGR_PPRE_Msk;
+  RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW_Msk) | (0b11 << RCC_CFGR_SW_Pos);
+
+  // wait for clock switch to become stable
+  while ((RCC->CFGR & RCC_CFGR_SWS) != (0b11 << RCC_CFGR_SWS_Pos))
+    ;
+}
+
 
 /** =================================================
  * 
@@ -25,17 +138,31 @@ const uint8_t USART2_TX_PIN = 2;
 # define NOTE_F 1397 // F6
 # define NOTE_A 880 // A5
 # define NOTE_G 784 // G5
+// Mario lvl up E G E C D G
+const uint16_t lvlup_notes[] = {NOTE_E, NOTE_G, 2*NOTE_E, 2*NOTE_C, 2*NOTE_D, 2*NOTE_G};
+const int lvlup_length[] = {1000000, 1000000, 1000000, 800000, 800000, 1000000};
+const uint16_t gameover_notes[] = {2*NOTE_G, 2*NOTE_D, 2*NOTE_D, 2*NOTE_D, 2*NOTE_C, 2*NOTE_B, 2*NOTE_G, 2*NOTE_E, 2*NOTE_E, NOTE_C};
+//const int gameover_length[] = {600000, 1000000, 600000, 800000, 800000, 800000, 600000, 1000000, 600000, 1000000};
+const int gameover_length[] = {
+  400000, // G5 Achtel
+  800000, // D6 Viertel
+  400000, // D6 Achtel
+  600000, // D6 Triole
+  600000, // C6 Triole
+  600000, // B5 Triole
+  400000, // G5 Viertel
+  800000, // E5 Achtel
+  400000, // E5 Achtel
+  800000  // C6 punktierte Viertel
+};
 
-const uint16_t notes[] = {NOTE_C, NOTE_D, NOTE_E, NOTE_F, NOTE_G, NOTE_A, NOTE_B};
-
-// FIFO variables
-volatile Fifo_t usart_rx_fifo;
-#define TARGET_LEN 20
-char match_buffer[TARGET_LEN] = {0};
-uint8_t match_index = 0;
 
 // Field constants
-#define FIELD_SIZE 100
+#define FIELD_SIZE 10
+#define SHIP_TYPES 4
+
+const uint8_t ship_size[SHIP_TYPES] = {5, 4, 3, 2}; // Different ship types
+const uint8_t ship_count[SHIP_TYPES] = {1, 2, 3, 4}; // Amount of ship type 
 
 /** =================================================
  * 
@@ -115,7 +242,7 @@ void PWM_INIT()
     GPIOC->AFR[1] &= ~(0b0000 << (PIN_SPEAKER * 4));
     GPIOC->AFR[1] |= (0b0000 << (PIN_SPEAKER * 4)); // AF0 für TIM3
 
-    TIM3->PSC = 47; // ergibt 1 MHz Timer-Takt (48 MHz / (47+1))
+    TIM3->PSC = 47; // 1 MHz Timer-Takt (48 MHz / (47+1))
     TIM3->ARR = arr_from_freq(NOTE_A);
     TIM3->CCR3 = TIM3->ARR / 2;
 
@@ -125,24 +252,57 @@ void PWM_INIT()
 }
 
 /**
- * @brief plays a victory tune
+ * @brief Initialize timer for field generator
+ */
+void TIMER_INIT(){
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+    TIM2->PSC = 47; // 1 MHz Timer-Takt (48 MHz / (47+1)) -> 1 count = 1 µs
+    TIM2->ARR = 179999999; // for 2 minutes of counting
+    TIM2->CR1 |= TIM_CR1_CEN;
+}
+
+/**
+ * @brief Delays the program execution for a specified amount of time.
+ * @param time The amount of time to delay in number of cycles.
+ * @return 0 when the delay is completed.
+ */
+int delay(uint32_t time){
+    for(uint32_t i = 0; i < time; i++ ){
+        asm("nop"); // No operation, used for delaying
+    }
+    return 0;
+}
+
+/**
+ * @brief plays a victory tune (Mario level up) E G E C D G
  */
 void play_victory_tune()
 {
     TIM3->CR1 |= TIM_CR1_CEN;
-    for(int idx = 0; idx < 7; idx++)
+    for(int idx = 0; idx < 6; idx++)
     {
-        //TIM3->CNT = 0;
-        TIM3->ARR = arr_from_freq(notes[idx]);
+        TIM3->ARR = arr_from_freq(lvlup_notes[idx]);
         TIM3->CCR3 = TIM3->ARR / 2;
-        for(uint32_t i = 0; i < 1000000; i++ )
-        {
-            asm("nop"); // No operation, used for delaying
-        }
-
-        //while(TIM3->CNT < 1000000);
+        delay(lvlup_length[idx]);
     }
     
+}
+
+/**
+ * @brief plays a defeat tune
+ */
+void play_defeat_tune()
+{
+    TIM3->CR1 |= TIM_CR1_CEN;
+    for(int idx = 0; idx < 9; idx++)
+    {
+        TIM3->ARR = arr_from_freq(gameover_notes[idx]);
+        TIM3->CCR3 = TIM3->ARR / 2;
+        delay(300000); // constant playing length
+        TIM3->CR1 &= ~(TIM_CR1_CEN);
+        delay(gameover_length[idx]); // variable pause length
+        TIM3->CR1 |= TIM_CR1_CEN;
+    }
 }
 
 /** =========================================
@@ -156,72 +316,129 @@ void play_victory_tune()
  * @return battlefield as int array
 */
 // This function generates a constant field for the game
-int field[FIELD_SIZE] = {
-        0, 0, 0, 5, 5, 5, 5, 5, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        2, 0, 0, 0, 3, 3, 3, 0, 0, 0,
-        2, 0, 0, 0, 0, 0, 0, 0, 4, 0,
-        0, 0, 3, 3, 3, 0, 0, 0, 4, 0,
-        3, 0, 0, 0, 0, 0, 0, 0, 4, 0,
-        3, 0, 2, 2, 0, 0, 0, 0, 4, 0,
-        3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 4, 4, 4, 4, 0, 2, 0, 2,
-        0, 0, 0, 0, 0, 0, 0, 2, 0, 2
-};
-int field_copy[FIELD_SIZE];
-int enemy_field[FIELD_SIZE] = {0};
+
+// int field[FIELD_SIZE*FIELD_SIZE] = { // ========= DEBUG
+//         0, 0, 0, 5, 5, 5, 5, 5, 0, 0,
+//         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//         2, 0, 0, 0, 3, 3, 3, 0, 0, 0,
+//         2, 0, 0, 0, 0, 0, 0, 0, 4, 0,
+//         0, 0, 3, 3, 3, 0, 0, 0, 4, 0,
+//         3, 0, 0, 0, 0, 0, 0, 0, 4, 0,
+//         3, 0, 2, 2, 0, 0, 0, 0, 4, 0,
+//         3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//         0, 0, 4, 4, 4, 4, 0, 2, 0, 2,
+//         0, 0, 0, 0, 0, 0, 0, 2, 0, 2
+// };
+int field[FIELD_SIZE*FIELD_SIZE] = {0};
+int enemy_field[FIELD_SIZE*FIELD_SIZE] = {0};
 
 void init_fields() {
-    // Initialize the copy of the field with the same values as the original field and reset enemy field
-    for(int i = 0; i < FIELD_SIZE; i++) {
-        field_copy[i] = field[i];
+
+    // Initialize reset own field and enemy field
+    for(int i = 0; i < FIELD_SIZE*FIELD_SIZE; i++) {
+        field[i] = 0;
         enemy_field[i] = 0;
     }
+    // generate new field
+    generate_field();
 }
 
- // constant field
- int *generate_field(){
-    return field;
- }
+ /**
+  * @brief get "random" number from counter
+  * @return Timer 2 Counter value 
+  */
+uint32_t get_random(){
+    return TIM2->CNT;
+}
 
-/*
- // random field
-int *generate_field(){
-    //int field[100] = 0;
-    int ShipSize = 6; // 5 (biggest shipsize) + 1 (amount of biggest ship)
-    int FieldSize = 100;
-    int x = 0;
-    int y = 0;
+/**
+ * @brief Check if ship position can be set correctly 
+ */
+int is_valid(int *field, int x, int y, int len, int horizontal) {
+    for (int i = 0; i < len; i++) {
+        int xi = x + (horizontal ? i : 0);
+        int yi = y + (horizontal ? 0 : i);
 
-    for(int length = 2; length<ShipSize; length++)
-    {
-        int amount = ShipSize-length;
-            if(amount > 0) // && (!valid_field(x,y,length)) // && ((field[x-1 + y*10] == length) ||  (field[x+1 + y*10] == length) || (field[x + (y-1)*10] == length) || (field[x + (y+1)*10] == length))
-            {
-                /**
-                field[x + y*10] = length;
-                
-                amount--;
+        if (xi < 0 || xi >= FIELD_SIZE || yi < 0 || yi >= FIELD_SIZE)
+            return 0;
+
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                int nx = xi + dx;
+                int ny = yi + dy;
+                if (nx >= 0 && nx < FIELD_SIZE && ny >= 0 && ny < FIELD_SIZE) {
+                    if (field[ny * FIELD_SIZE + nx] != 0)
+                        return 0;
+                }
             }
-
+        }
     }
+    return 1;
+}
 
+/**
+ * @brief Place ship on field
+ */
+void place_ship(uint8_t field[FIELD_SIZE][FIELD_SIZE], int len) {
+    int attempts = 0;
+    while (attempts++ < 1000) {
+        uint32_t number_cnt = get_random();
+        int horizontal = number_cnt % 2;
+        int x = number_cnt % (horizontal ? FIELD_SIZE - len + 1 : FIELD_SIZE);
+        int y = (number_cnt >> 4) % (horizontal ? FIELD_SIZE : FIELD_SIZE - len + 1);
+
+        if (is_valid(field, x, y, len, horizontal)) {
+            for (int i = 0; i < len; i++) {
+                int xi = x + (horizontal ? i : 0);
+                int yi = y + (horizontal ? 0 : i);
+                field[yi][xi] = len;  // Optional: oder feste Kennung wie 1
+            }
+            return;
+        }
+    }
+}
+
+/**
+ * @brief generate field
+ */
+int generate_field() {
+    int tries = 0;
+    while (tries++ < 10) { // max 10 tries to generate field
+        for (int i = 0; i < FIELD_SIZE * FIELD_SIZE; i++)
+            field[i] = 0; // resetting field if failed attempt
+
+        int placed_cells = 0;
+        for (int t = 0; t < SHIP_TYPES; t++) {
+            for (int count = 0; count < ship_count[t]; count++) {
+                int len = ship_size[t];
+                int placed = 0;
+                int attempts = 0;
+
+                while (!placed && attempts++ < 1000) {
+                    uint32_t number_cnt = get_random();
+                    int horizontal = number_cnt % 2;
+                    int x = number_cnt % (horizontal ? FIELD_SIZE - len + 1 : FIELD_SIZE);
+                    int y = (number_cnt >> 4) % (horizontal ? FIELD_SIZE : FIELD_SIZE - len + 1);
+
+                    if (is_valid(field, x, y, len, horizontal)) {
+                        for (int i = 0; i < len; i++) {
+                            int xi = x + (horizontal ? i : 0);
+                            int yi = y + (horizontal ? 0 : i);
+                            field[yi * FIELD_SIZE + xi] = len;
+                        }
+                        placed = 1;
+                        placed_cells += len;
+                    }
+                }
+
+                if (!placed) break; // cancel if ship can't be placed
+            }
+        }
+
+        if (placed_cells == 30) return 1; // true if all 30 fields are set
+    }
     return 0;
 }
-*/
-
-int valid_field(int coord_x, int coord_y, int length)
-{
-    if(((field[coord_x-1 + coord_y*10] == length) ||  (field[coord_x+1 + coord_y*10] == length) || (field[coord_x + (coord_y-1)*10] == length) || (field[coord_x + (coord_y+1)*10] == length)))
-    {
-        return 1;
-    }
-    else
-    {
-        return 0;
-    }
-}
-
 
 
 /**
@@ -230,11 +447,11 @@ int valid_field(int coord_x, int coord_y, int length)
  */
 
 // checksum_string function to convert the checksum into a string
-void checksum_string(/*int *field,*/ char *output) {
-    for (int row = 0; row < 10; row++) {
+void checksum_string(char *output) {
+    for (int row = 0; row < FIELD_SIZE; row++) {
         int count = 0;
-        for (int col = 0; col < 10; col++) {
-            if (field[row * 10 + col] != 0) {
+        for (int col = 0; col < FIELD_SIZE; col++) {
+            if (field[row * FIELD_SIZE + col] != 0) {
                 count++;
             }
         }
@@ -248,15 +465,158 @@ void checksum_string(/*int *field,*/ char *output) {
    * @brief Algorithm for shooting 
    * @return target coords x and y
 */
-
-void shoot(int *enemy_field, int *x, int *y){
-    for (int i = 0; i < FIELD_SIZE; i++){
-        if((enemy_field[i] != 1) && (enemy_field[i] != 2) && (enemy_field[i] != 3)){ // 1 is water, 2 is hit, 3 is pending shot
+void shoot(int *x, int *y){
+    for (int i = 0; i < FIELD_SIZE*FIELD_SIZE; i++){
+        if((enemy_field[i] != 1) && (enemy_field[i] != 2)) // 1 is water, 2 is hit, 0 is unknown
+        {    
             // if the field is not empty, return the coordinates
-            *x = i % 10; // x coordinate
-            *y = i / 10; // y coordinate
+            *x = i % FIELD_SIZE; // x coordinate
+            *y = i / FIELD_SIZE; // y coordinate
             break;
         }
+    }
+}
+
+
+void shoot3(int *x, int *y)
+{
+    static int state = 0;
+    static int last_hit_x = -1, last_hit_y = -1;
+    static int direction = 0;
+    static int chain_length = 0;
+
+    if(enemy_field[*y*FIELD_SIZE + *x] == 2)
+    {
+        last_hit_x = *x;
+        last_hit_y = *y;
+        chain_length++;
+        if (direction == 0) {
+            if (*x + 1 < FIELD_SIZE && enemy_field[*y * FIELD_SIZE + (*x + 1)] == 0){
+                direction = 1; 
+                state = 1;
+            }
+             else if (*y + 1 < FIELD_SIZE && enemy_field[(*y + 1) * FIELD_SIZE + *x] == 0){
+                direction = 2; 
+                state = 2;
+            }
+             else{
+                direction = 0;
+                state = 0;
+                chain_length = 0;
+             }
+        }
+    }
+    if(*x == 9 && *y == 9){state = 5; direction = 5;}
+
+    switch(state)
+    {
+        case 0:
+            for (int col = 0; col < FIELD_SIZE; col++) {
+                    for (int row = 0; row < FIELD_SIZE; row++) {
+                        if ((col % 2 == 0 && row % 2 == 0) || (col % 2 == 1 && row % 2 == 1)) { // odd row = odd col number and vice versa
+                            if(*x == col && *y == row){continue;}
+                            if (enemy_field[row * FIELD_SIZE + col] == 0) {
+                                *x = col;
+                                *y = row;
+                                state = 0;
+                                return;
+                            }
+                        }
+                    }
+                }
+            break;
+        case 1: // Todo: Decide whether function calling or big if statements in state machine would be better
+            if((*x+1) < FIELD_SIZE && enemy_field[(*x+1) + *y*FIELD_SIZE] == 0 && enemy_field[*x + *y*FIELD_SIZE == 2]){
+                *y = last_hit_y;
+                *x = last_hit_x+1;
+                return;
+            } else if(enemy_field[*x + *y*FIELD_SIZE] == 1 || enemy_field[(*x+1) + *y*FIELD_SIZE] != 0 || (*x+1) >= FIELD_SIZE){
+                if((last_hit_y+1) < FIELD_SIZE && enemy_field[last_hit_x + (last_hit_y+1)*FIELD_SIZE] == 0 && chain_length <= 1){
+                    chain_length = 0;
+                    *y = last_hit_y+1;
+                    *x = last_hit_x;
+                    state = 2;
+                    direction = 2;
+                    return;
+                } 
+                else if(FIELD_SIZE - *x - chain_length - 1 > 0 && enemy_field[(last_hit_x-chain_length) + last_hit_y*FIELD_SIZE] != 0){
+                    *y = last_hit_y;
+                    *x = last_hit_x - chain_length;
+                    chain_length = 0;
+                    state = 3;
+                    direction = 3;
+                    return;
+                }
+            }
+            state = 5;
+            direction = 5;
+            break;
+
+        case 2:
+
+            *y = last_hit_y + 1;
+            *x = last_hit_x;
+            state = 0;
+            return;
+
+        case 3:
+            *x = last_hit_x - (chain_length + 1);
+            *y = last_hit_y;
+            chain_length = 0;
+            last_hit_x = *x;
+            state = 0;
+            return;
+
+        case 4:
+            *y = last_hit_y - (chain_length + 1);
+            *x = last_hit_x;
+            chain_length = 0;
+            last_hit_y = *y;            
+            state = 0;
+            return;
+
+        case 5:
+            for (int col = 0; col < FIELD_SIZE; col++) {
+                for (int row = 0; row < FIELD_SIZE; row++) {
+                    if ((col % 2 == 0 && row % 2 == 1) || (col % 2 == 1 && row % 2 == 0)) {
+                        if (enemy_field[row * FIELD_SIZE + col] == 0) {
+                            *x = col;
+                            *y = row;
+                            //state = 0;
+                            return;
+                        }
+                    }
+                }
+            }
+            break;
+    }
+}
+
+
+/**
+ * @brief updates the enemy field
+ */
+void update_enemy_field(int x, int y){
+    if (x > 0 && enemy_field[(x-1) + y*FIELD_SIZE] == 2) {
+        
+        if (y+1 < FIELD_SIZE) enemy_field[x + (y+1)*FIELD_SIZE] = 1;
+        if (x-2 >= 0) {
+            if (enemy_field[x-2 + y*FIELD_SIZE] != 2) enemy_field[x-2 + y*FIELD_SIZE] = 1;
+            if (y > 0) enemy_field[x-2 + (y-1)*FIELD_SIZE] = 1;
+            if (y < FIELD_SIZE-1) enemy_field[x-2 + (y+1)*FIELD_SIZE] = 1;
+        }
+        if (y > 0 && x-1 >= 0) enemy_field[x-1 + (y-1)*FIELD_SIZE] = 1;
+        if (y < FIELD_SIZE-1 && x-1 >= 0) enemy_field[x-1 + (y+1)*FIELD_SIZE] = 1;
+    }
+    else if (y > 0 && enemy_field[x + (y-1)*FIELD_SIZE] == 2) {
+        if (x+1 < FIELD_SIZE) enemy_field[x+1 + y*FIELD_SIZE] = 1;
+        if (y-2 >= 0) {
+            if (enemy_field[x + (y-2)*FIELD_SIZE] != 2) enemy_field[x + (y-2)*FIELD_SIZE] = 1;
+            if (x > 0) enemy_field[x-1 + (y-2)*FIELD_SIZE] = 1;
+            if (x < FIELD_SIZE-1) enemy_field[x+1 + (y-2)*FIELD_SIZE] = 1;
+        }
+        if (x > 0) enemy_field[x-1 + (y-1)*FIELD_SIZE] = 1;
+        if (x < FIELD_SIZE-1) enemy_field[x+1 + (y-1)*FIELD_SIZE] = 1;
     }
 }
 
@@ -265,22 +625,20 @@ void shoot(int *enemy_field, int *x, int *y){
  * @return "H" for hit or "M" for miss
  */
 int check_hit(uint8_t x, uint8_t y) {
-    if (field[y * 10 + x] != 0) {
-        field_copy[y * 10 + x] = 0; // Mark as hit
-        return 1;
-    } else {
-        return 0;
-    }
+    return (field[y * FIELD_SIZE + x] != 0);
 }
 
+/**
+ * @brief sends own battlefield to schiff.py at the end of the game
+ */
 void send_battlefield()
 {
-    for(int i = 0; i < 10; i++)
+    for(int i = 0; i < FIELD_SIZE; i++)
     {
         LOG("DH_SF%dD", i);
-        for(int j = 0; j < 10; j++)
+        for(int j = 0; j < FIELD_SIZE; j++)
         {
-            LOG("%d", field[i * 10 + j]);
+            LOG("%d", field[i * FIELD_SIZE + j]);
         }
         LOG("\n");
     }
@@ -296,6 +654,7 @@ int main(void)
     SystemClock_Config();
     UART_INIT();
     PWM_INIT();
+    TIMER_INIT();
 
     NVIC_SetPriorityGrouping(0);                               // Use 4 bits for priority, 0 bits for subpriority
     uint32_t uart_pri_encoding = NVIC_EncodePriority(0, 1, 0); // Encode priority: group 1, subpriority 0
@@ -313,11 +672,14 @@ int main(void)
     //init_field_copy();
     char checksum_str[11];
     // Has to be put inside the case state as soon as field generates randomly
-    checksum_string(/*(int *)generate_field(),*/ checksum_str);
+
+    //checksum_string(checksum_str);
     
     // coordinates for the battlefield
     int x_received = 0;
     int y_received = 0;
+    int x = 0;
+    int y = 0;
 
     // Win and Loose counter
     uint8_t win_count = 0;
@@ -399,9 +761,13 @@ int main(void)
             case 1:
                 LOG("DH_START_Krapfen\n");
                 init_fields();
+                checksum_string(checksum_str);
                 hit_counter = 0;
                 gothit_counter = 0;
                 gameover = 0;
+                x = 0;
+                y = 0;
+                TIM2->CNT = 0;
                 state = 0;
                 break;
             // Sending checksum
@@ -409,13 +775,13 @@ int main(void)
                 LOG("DH_CS_%s\n", checksum_str);
                 state = 0;
                 break;
+
             // Shooting phase | Check if Hit or Miss and send coordinates of target
             case 3:
-                //TIM3->CR1 |= TIM_CR1_CEN;
-                if(check_hit(x_received, y_received))
+                if(check_hit(y_received, x_received))
                 {
                     gothit_counter++;
-                    if(gothit_counter == 29)
+                    if(gothit_counter == 30)
                     {
                         loose_count++;
                         state = 5;
@@ -426,42 +792,50 @@ int main(void)
                 {
                     LOG("DH_BOOM_M\n");
                 }
-                int x = 0;
-                int y = 0;
-                shoot(enemy_field, &x, &y);
-                enemy_field[y * 10 + x] = 3; // pending shot
                 
-                LOG("DH_BOOM_%d_%d\n", x, y);
+                //shoot3(&x, &y);
+                //shoot2(&x, &y);
+                shoot(&x, &y);
+                
+                LOG("DH_BOOM_%d_%d\n", y, x);
                 
                 state = 0;
                 break;
+
             // Receiving Hit or Miss and updating enemy field
             case 4:
                 // Check if Hit or Miss has been send correctly
                 if (match_buffer[8] == 'H')
                 {
                     // Update enemy field to mark hit
-                    enemy_field[y * 10 + x] = 2; // 2 for hit
+                    enemy_field[y * FIELD_SIZE + x] = 2; // 2 for hit
+                    update_enemy_field(x, y);
                     hit_counter++;
                 }
                 else
                 {
                     // Update enemy field to mark miss
-                    enemy_field[y * 10 + x] = 1; // 1 for water
+                    enemy_field[y * FIELD_SIZE + x] = 1; // 1 for water
                 }
                 state = 0;
                 break;
+
             // Sending final field and win message
             case 5:
             // Send final field
                 send_battlefield();
                 gameover = 1;
-                if((win_count + loose_count) == 98) // 100 - 2 (iteration starts at 0)
+                if((win_count + loose_count) == 100)
+                //if((win_count + loose_count) == 10) // only to test melody
                 {
-                    if(win_count < loose_count)
+                    if(win_count > loose_count)
                     {
                        play_victory_tune();
                        TIM3->CCR3 = 0;
+                    } else if(win_count < loose_count)
+                    {
+                        play_defeat_tune();
+                        TIM3->CCR3 = 0;
                     }
                     win_count = 0;
                     loose_count = 0;
