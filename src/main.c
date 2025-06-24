@@ -223,13 +223,6 @@ void UART_INIT()
 }
 
 /**
- * @brief calculates arr value for different frequencies
- */
-uint32_t arr_from_freq(uint16_t freq) {
-    return APB_FREQ / (freq * (TIM3->PSC + 1)) - 1;
-}
-
-/**
  * @brief Initialize PWM for speaker
  */
 void PWM_INIT()
@@ -257,7 +250,7 @@ void PWM_INIT()
 void TIMER_INIT(){
     RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
     TIM2->PSC = 47; // 1 MHz Timer-Takt (48 MHz / (47+1)) -> 1 count = 1 µs
-    TIM2->ARR = 179999999; // for 2 minutes of counting
+    TIM2->ARR = 179999999; // for 3 minutes of counting
     TIM2->CR1 |= TIM_CR1_CEN;
 }
 
@@ -273,8 +266,21 @@ int delay(uint32_t time){
     return 0;
 }
 
+/** ================================================
+ * 
+ *              Sound specifications
+ * 
+ ===================================================*/
+
 /**
- * @brief plays a victory tune (Mario level up) E G E C D G
+ * @brief calculates arr value for different frequencies
+ */
+uint32_t arr_from_freq(uint16_t freq) {
+    return APB_FREQ / (freq * (TIM3->PSC + 1)) - 1;
+}
+
+/**
+ * @brief plays a victory tune (Mario level up)
  */
 void play_victory_tune()
 {
@@ -289,7 +295,7 @@ void play_victory_tune()
 }
 
 /**
- * @brief plays a defeat tune
+ * @brief plays a defeat tune (Mario death sound)
  */
 void play_defeat_tune()
 {
@@ -299,7 +305,7 @@ void play_defeat_tune()
         TIM3->ARR = arr_from_freq(gameover_notes[idx]);
         TIM3->CCR3 = TIM3->ARR / 2;
         delay(300000); // constant playing length
-        TIM3->CR1 &= ~(TIM_CR1_CEN);
+        TIM3->CR1 &= ~(TIM_CR1_CEN); // deactivate timer for staccato effect
         delay(gameover_length[idx]); // variable pause length
         TIM3->CR1 |= TIM_CR1_CEN;
     }
@@ -311,27 +317,14 @@ void play_defeat_tune()
  * 
  ============================================*/
 
+// Initialize own field and enemy_field as global variables
+int field[FIELD_SIZE*FIELD_SIZE] = {0};
+int enemy_field[FIELD_SIZE*FIELD_SIZE] = {0};
+
 /**
  * @brief Generates field constellation of ships
  * @return battlefield as int array
 */
-// This function generates a constant field for the game
-
-// int field[FIELD_SIZE*FIELD_SIZE] = { // ========= DEBUG
-//         0, 0, 0, 5, 5, 5, 5, 5, 0, 0,
-//         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-//         2, 0, 0, 0, 3, 3, 3, 0, 0, 0,
-//         2, 0, 0, 0, 0, 0, 0, 0, 4, 0,
-//         0, 0, 3, 3, 3, 0, 0, 0, 4, 0,
-//         3, 0, 0, 0, 0, 0, 0, 0, 4, 0,
-//         3, 0, 2, 2, 0, 0, 0, 0, 4, 0,
-//         3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-//         0, 0, 4, 4, 4, 4, 0, 2, 0, 2,
-//         0, 0, 0, 0, 0, 0, 0, 2, 0, 2
-// };
-int field[FIELD_SIZE*FIELD_SIZE] = {0};
-int enemy_field[FIELD_SIZE*FIELD_SIZE] = {0};
-
 void init_fields() {
 
     // Initialize reset own field and enemy field
@@ -354,11 +347,16 @@ uint32_t get_random(){
 /**
  * @brief Check if ship position can be set correctly 
  */
-int is_valid(int *field, int x, int y, int len, int horizontal) {
+int valid_ship(int x, int y, int len, int horizontal) {
     for (int i = 0; i < len; i++) {
-        int xi = x + (horizontal ? i : 0);
-        int yi = y + (horizontal ? 0 : i);
-
+        int xi, yi;
+        if (horizontal) {
+            xi = x + i;
+            yi = y;
+        } else {
+            xi = x;
+            yi = y + i;
+        }
         if (xi < 0 || xi >= FIELD_SIZE || yi < 0 || yi >= FIELD_SIZE)
             return 0;
 
@@ -374,28 +372,6 @@ int is_valid(int *field, int x, int y, int len, int horizontal) {
         }
     }
     return 1;
-}
-
-/**
- * @brief Place ship on field
- */
-void place_ship(uint8_t field[FIELD_SIZE][FIELD_SIZE], int len) {
-    int attempts = 0;
-    while (attempts++ < 1000) {
-        uint32_t number_cnt = get_random();
-        int horizontal = number_cnt % 2;
-        int x = number_cnt % (horizontal ? FIELD_SIZE - len + 1 : FIELD_SIZE);
-        int y = (number_cnt >> 4) % (horizontal ? FIELD_SIZE : FIELD_SIZE - len + 1);
-
-        if (is_valid(field, x, y, len, horizontal)) {
-            for (int i = 0; i < len; i++) {
-                int xi = x + (horizontal ? i : 0);
-                int yi = y + (horizontal ? 0 : i);
-                field[yi][xi] = len;  // Optional: oder feste Kennung wie 1
-            }
-            return;
-        }
-    }
 }
 
 /**
@@ -416,25 +392,35 @@ int generate_field() {
 
                 while (!placed && attempts++ < 1000) {
                     uint32_t number_cnt = get_random();
-                    int horizontal = number_cnt % 2;
-                    int x = number_cnt % (horizontal ? FIELD_SIZE - len + 1 : FIELD_SIZE);
-                    int y = (number_cnt >> 4) % (horizontal ? FIELD_SIZE : FIELD_SIZE - len + 1);
+                    int horizontal = number_cnt % 2; // 0 is vertical, 1 is horizontal
+                    int x, y;
+                    if(horizontal){
+                        x = number_cnt % (FIELD_SIZE - len + 1);
+                        y = (number_cnt >> 4) % FIELD_SIZE;
+                    } else {
+                        x = number_cnt % FIELD_SIZE;
+                        y = (number_cnt >> 4) % (FIELD_SIZE - len + 1);
+                    }
 
-                    if (is_valid(field, x, y, len, horizontal)) {
+                    if (valid_ship(x, y, len, horizontal)) {
                         for (int i = 0; i < len; i++) {
-                            int xi = x + (horizontal ? i : 0);
-                            int yi = y + (horizontal ? 0 : i);
+                            int xi, yi;
+                            if (horizontal) {
+                                xi = x + i;
+                                yi = y;
+                            } else {
+                                xi = x;
+                                yi = y + i;
+                            }
                             field[yi * FIELD_SIZE + xi] = len;
                         }
                         placed = 1;
                         placed_cells += len;
                     }
                 }
-
                 if (!placed) break; // cancel if ship can't be placed
             }
         }
-
         if (placed_cells == 30) return 1; // true if all 30 fields are set
     }
     return 0;
@@ -443,10 +429,7 @@ int generate_field() {
 
 /**
  * @brief Calculates checksum of battlefield
- * @return checksum
  */
-
-// checksum_string function to convert the checksum into a string
 void checksum_string(char *output) {
     for (int row = 0; row < FIELD_SIZE; row++) {
         int count = 0;
@@ -477,120 +460,143 @@ void shoot(int *x, int *y){
     }
 }
 
-
-void shoot3(int *x, int *y)
+/**
+ * @brief Better algorithm for shooting
+ * @return target coords x and y
+ */
+void shoot2(int *x, int *y)
 {
-    static int state = 0;
-    static int last_hit_x = -1, last_hit_y = -1;
-    static int direction = 0;
-    static int chain_length = 0;
-
-    if(enemy_field[*y*FIELD_SIZE + *x] == 2)
-    {
-        last_hit_x = *x;
-        last_hit_y = *y;
-        chain_length++;
-        if (direction == 0) {
-            if (*x + 1 < FIELD_SIZE && enemy_field[*y * FIELD_SIZE + (*x + 1)] == 0){
-                direction = 1; 
-                state = 1;
-            }
-             else if (*y + 1 < FIELD_SIZE && enemy_field[(*y + 1) * FIELD_SIZE + *x] == 0){
-                direction = 2; 
-                state = 2;
-            }
-             else{
-                direction = 0;
-                state = 0;
-                chain_length = 0;
-             }
+    // check if last shot was a hit
+    if(enemy_field[*x + *y*FIELD_SIZE] == 2){
+        if((*y+1 < FIELD_SIZE && enemy_field[*x + (*y+1)*FIELD_SIZE] == 0) || (*x>0 && enemy_field[(*x-1) + *y*FIELD_SIZE] != 2 && *y+1 < FIELD_SIZE)){
+            *y = *y + 1;
+            return;
         }
     }
-    if(*x == 9 && *y == 9){state = 5; direction = 5;}
-
-    switch(state)
-    {
-        case 0:
-            for (int col = 0; col < FIELD_SIZE; col++) {
-                    for (int row = 0; row < FIELD_SIZE; row++) {
-                        if ((col % 2 == 0 && row % 2 == 0) || (col % 2 == 1 && row % 2 == 1)) { // odd row = odd col number and vice versa
-                            if(*x == col && *y == row){continue;}
-                            if (enemy_field[row * FIELD_SIZE + col] == 0) {
-                                *x = col;
-                                *y = row;
-                                state = 0;
-                                return;
-                            }
-                        }
-                    }
-                }
-            break;
-        case 1: // Todo: Decide whether function calling or big if statements in state machine would be better
-            if((*x+1) < FIELD_SIZE && enemy_field[(*x+1) + *y*FIELD_SIZE] == 0 && enemy_field[*x + *y*FIELD_SIZE == 2]){
-                *y = last_hit_y;
-                *x = last_hit_x+1;
-                return;
-            } else if(enemy_field[*x + *y*FIELD_SIZE] == 1 || enemy_field[(*x+1) + *y*FIELD_SIZE] != 0 || (*x+1) >= FIELD_SIZE){
-                if((last_hit_y+1) < FIELD_SIZE && enemy_field[last_hit_x + (last_hit_y+1)*FIELD_SIZE] == 0 && chain_length <= 1){
-                    chain_length = 0;
-                    *y = last_hit_y+1;
-                    *x = last_hit_x;
-                    state = 2;
-                    direction = 2;
-                    return;
-                } 
-                else if(FIELD_SIZE - *x - chain_length - 1 > 0 && enemy_field[(last_hit_x-chain_length) + last_hit_y*FIELD_SIZE] != 0){
-                    *y = last_hit_y;
-                    *x = last_hit_x - chain_length;
-                    chain_length = 0;
-                    state = 3;
-                    direction = 3;
-                    return;
-                }
-            }
-            state = 5;
-            direction = 5;
-            break;
-
-        case 2:
-
-            *y = last_hit_y + 1;
-            *x = last_hit_x;
-            state = 0;
+    for (int i = 0; i < FIELD_SIZE*FIELD_SIZE; i++){
+        if((enemy_field[i] != 1) && (enemy_field[i] != 2)) // 1 is water, 2 is hit, 0 is unknown
+        {    
+            // if the field is not empty, return the coordinates
+            *x = i % FIELD_SIZE; // x coordinate
+            *y = i / FIELD_SIZE; // y coordinate
             return;
-
-        case 3:
-            *x = last_hit_x - (chain_length + 1);
-            *y = last_hit_y;
-            chain_length = 0;
-            last_hit_x = *x;
-            state = 0;
-            return;
-
-        case 4:
-            *y = last_hit_y - (chain_length + 1);
-            *x = last_hit_x;
-            chain_length = 0;
-            last_hit_y = *y;            
-            state = 0;
-            return;
-
-        case 5:
-            for (int col = 0; col < FIELD_SIZE; col++) {
-                for (int row = 0; row < FIELD_SIZE; row++) {
-                    if ((col % 2 == 0 && row % 2 == 1) || (col % 2 == 1 && row % 2 == 0)) {
-                        if (enemy_field[row * FIELD_SIZE + col] == 0) {
-                            *x = col;
-                            *y = row;
-                            //state = 0;
-                            return;
-                        }
-                    }
-                }
-            }
-            break;
+        }
     }
 }
+
+// void shoot3(int *x, int *y)
+// {
+//     static int state = 0;
+//     static int last_hit_x = -1, last_hit_y = -1;
+//     static int direction = 0;
+//     static int chain_length = 0;
+
+//     if(enemy_field[*y*FIELD_SIZE + *x] == 2)
+//     {
+//         last_hit_x = *x;
+//         last_hit_y = *y;
+//         chain_length++;
+//         if (direction == 0) {
+//             if (*x + 1 < FIELD_SIZE && enemy_field[*y * FIELD_SIZE + (*x + 1)] == 0){
+//                 direction = 1; 
+//                 state = 1;
+//             }
+//              else if (*y + 1 < FIELD_SIZE && enemy_field[(*y + 1) * FIELD_SIZE + *x] == 0){
+//                 direction = 2; 
+//                 state = 2;
+//             }
+//              else{
+//                 direction = 0;
+//                 state = 0;
+//                 chain_length = 0;
+//              }
+//         }
+//     }
+//     if(*x == 9 && *y == 9){state = 5; direction = 5;}
+
+//     switch(state)
+//     {
+//         case 0:
+//             for (int col = 0; col < FIELD_SIZE; col++) {
+//                     for (int row = 0; row < FIELD_SIZE; row++) {
+//                         if ((col % 2 == 0 && row % 2 == 0) || (col % 2 == 1 && row % 2 == 1)) { // odd row = odd col number and vice versa
+//                             if(*x == col && *y == row){continue;}
+//                             if (enemy_field[row * FIELD_SIZE + col] == 0) {
+//                                 *x = col;
+//                                 *y = row;
+//                                 state = 0;
+//                                 return;
+//                             }
+//                         }
+//                     }
+//                 }
+//             break;
+//         case 1: // Todo: Decide whether function calling or big if statements in state machine would be better
+//             if((*x+1) < FIELD_SIZE && enemy_field[(*x+1) + *y*FIELD_SIZE] == 0 && enemy_field[*x + *y*FIELD_SIZE == 2]){
+//                 *y = last_hit_y;
+//                 *x = last_hit_x+1;
+//                 return;
+//             } else if(enemy_field[*x + *y*FIELD_SIZE] == 1 || enemy_field[(*x+1) + *y*FIELD_SIZE] != 0){// || (*x+1) >= FIELD_SIZE){
+//                 if((last_hit_y+1) < FIELD_SIZE && enemy_field[last_hit_x + (last_hit_y+1)*FIELD_SIZE] == 0 && chain_length <= 1){
+//                     chain_length = 0;
+//                     *y = last_hit_y+1;
+//                     *x = last_hit_x;
+//                     state = 2;
+//                     direction = 2;
+//                     return;
+//                 } 
+//                 else if(FIELD_SIZE - *x - chain_length - 1 > 0 && enemy_field[(last_hit_x-chain_length) + last_hit_y*FIELD_SIZE] != 0){
+//                     *y = last_hit_y;
+//                     *x = last_hit_x - chain_length;
+//                     chain_length = 0;
+//                     state = 3;
+//                     direction = 3;
+//                     return;
+//                 }
+//             }
+//             state = 5;
+//             direction = 5;
+//             break;
+
+//         case 2:
+
+//             *y = last_hit_y + 1;
+//             *x = last_hit_x;
+//             state = 0;
+//             return;
+
+//         case 3:
+//             *x = last_hit_x - (chain_length + 1);
+//             *y = last_hit_y;
+//             chain_length = 0;
+//             last_hit_x = *x;
+//             state = 0;
+//             return;
+
+//         case 4:
+//             *y = last_hit_y - (chain_length + 1);
+//             *x = last_hit_x;
+//             chain_length = 0;
+//             last_hit_y = *y;            
+//             state = 0;
+//             return;
+
+//         case 5:
+//             for (int col = 0; col < FIELD_SIZE; col++) {
+//                 for (int row = 0; row < FIELD_SIZE; row++) {
+//                     if ((col % 2 == 0 && row % 2 == 1) || (col % 2 == 1 && row % 2 == 0)) {
+//                         if (enemy_field[row * FIELD_SIZE + col] == 0) {
+//                             *x = col;
+//                             *y = row;
+//                             //state = 0;
+//                             return;
+//                         }
+//                     }
+//                 }
+//             }
+//             break;
+//     }
+// }
 
 
 /**
@@ -622,7 +628,7 @@ void update_enemy_field(int x, int y){
 
 /**
  * @brief Checks if the shot was a hit or miss
- * @return "H" for hit or "M" for miss
+ * @return True or False
  */
 int check_hit(uint8_t x, uint8_t y) {
     return (field[y * FIELD_SIZE + x] != 0);
@@ -645,12 +651,13 @@ void send_battlefield()
 }
 
 
-/*
-    @brief main function
-    @return 0
+/**
+*   @brief main function
+*   @return 0
 */
 int main(void)
 {
+    // Initializes clock, UART, PWM and timer 
     SystemClock_Config();
     UART_INIT();
     PWM_INIT();
@@ -668,14 +675,10 @@ int main(void)
     // Case switch
     int state = 0;
 
-    // Initialize field and checksum
-    //init_field_copy();
+    // Initialize checksum_str variable
     char checksum_str[11];
-    // Has to be put inside the case state as soon as field generates randomly
 
-    //checksum_string(checksum_str);
-    
-    // coordinates for the battlefield
+    // coordinates for the battlefields
     int x_received = 0;
     int y_received = 0;
     int x = 0;
@@ -685,6 +688,7 @@ int main(void)
     uint8_t win_count = 0;
     uint8_t loose_count = 0;
 
+    // variable for checking if game has already ended
     int gameover = 0;
 
     // counts hits
@@ -704,7 +708,6 @@ int main(void)
         uint8_t byte;
         ret = fifo_get((Fifo_t *)&usart_rx_fifo, &byte) == 0;
         if (ret)
-        //if(fifo_get((Fifo_t *)&usart_rx_fifo, &byte) == 0)
         {              
             // Save byte in match_buffer
             match_buffer[match_index] = byte;
@@ -760,6 +763,8 @@ int main(void)
             // Receiving/sending start message
             case 1:
                 LOG("DH_START_Krapfen\n");
+                TIM2->CNT = 0;
+                TIM2->CR1 |= TIM_CR1_CEN;
                 init_fields();
                 checksum_string(checksum_str);
                 hit_counter = 0;
@@ -767,7 +772,6 @@ int main(void)
                 gameover = 0;
                 x = 0;
                 y = 0;
-                TIM2->CNT = 0;
                 state = 0;
                 break;
             // Sending checksum
@@ -794,8 +798,8 @@ int main(void)
                 }
                 
                 //shoot3(&x, &y);
-                //shoot2(&x, &y);
-                shoot(&x, &y);
+                shoot2(&x, &y);
+                //shoot(&x, &y);
                 
                 LOG("DH_BOOM_%d_%d\n", y, x);
                 
@@ -822,9 +826,9 @@ int main(void)
 
             // Sending final field and win message
             case 5:
-            // Send final field
+                // Send final field
                 send_battlefield();
-                gameover = 1;
+                gameover = 1; // setting gameover which means that the game is done
                 if((win_count + loose_count) == 100)
                 //if((win_count + loose_count) == 10) // only to test melody
                 {
@@ -841,6 +845,7 @@ int main(void)
                     loose_count = 0;
                 }
                 TIM3->CR1 &= ~TIM_CR1_CEN;
+                TIM2->CR1 &= ~TIM_CR1_CEN;
                 state = 0;
                 continue;
         }
