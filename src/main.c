@@ -130,6 +130,7 @@ const uint8_t USART2_TX_PIN = 2;
 
 // PIN for PWM
 #define PIN_SPEAKER 8
+
 // Define all Notes
 # define NOTE_E 659 // E5
 # define NOTE_B 987 // B5
@@ -138,11 +139,11 @@ const uint8_t USART2_TX_PIN = 2;
 # define NOTE_F 1397 // F6
 # define NOTE_A 880 // A5
 # define NOTE_G 784 // G5
-// Mario lvl up E G E C D G
+
+// Define melodies for the end of the tournament
 const uint16_t lvlup_notes[] = {NOTE_E, NOTE_G, 2*NOTE_E, 2*NOTE_C, 2*NOTE_D, 2*NOTE_G};
 const int lvlup_length[] = {1000000, 1000000, 1000000, 800000, 800000, 1000000};
 const uint16_t gameover_notes[] = {2*NOTE_G, 2*NOTE_D, 2*NOTE_D, 2*NOTE_D, 2*NOTE_C, 2*NOTE_B, 2*NOTE_G, 2*NOTE_E, 2*NOTE_E, NOTE_C};
-//const int gameover_length[] = {600000, 1000000, 600000, 800000, 800000, 800000, 600000, 1000000, 600000, 1000000};
 const int gameover_length[] = {
   400000, // G5 Achtel
   800000, // D6 Viertel
@@ -157,8 +158,9 @@ const int gameover_length[] = {
 };
 
 
-// Field constants
+// Field constant
 #define FIELD_SIZE 10
+// Different ship types
 #define SHIP_TYPES 4
 
 const uint8_t ship_size[SHIP_TYPES] = {5, 4, 3, 2}; // Different ship types
@@ -223,6 +225,13 @@ void UART_INIT()
 }
 
 /**
+ * @brief calculates arr value for different frequencies
+ */
+uint32_t arr_from_freq(uint16_t freq) {
+    return APB_FREQ / (freq * (TIM3->PSC + 1)) - 1;
+}
+
+/**
  * @brief Initialize PWM for speaker
  */
 void PWM_INIT()
@@ -271,13 +280,6 @@ int delay(uint32_t time){
  *              Sound specifications
  * 
  ===================================================*/
-
-/**
- * @brief calculates arr value for different frequencies
- */
-uint32_t arr_from_freq(uint16_t freq) {
-    return APB_FREQ / (freq * (TIM3->PSC + 1)) - 1;
-}
 
 /**
  * @brief plays a victory tune (Mario level up)
@@ -346,10 +348,14 @@ uint32_t get_random(){
 
 /**
  * @brief Check if ship position can be set correctly 
+ * @param Coords x and y, length of ship, horizontal (True/False)
+ * @return True or False
  */
 int valid_ship(int x, int y, int len, int horizontal) {
+    // Iterate through length of ship
     for (int i = 0; i < len; i++) {
         int xi, yi;
+        // check if horizontal or vertical
         if (horizontal) {
             xi = x + i;
             yi = y;
@@ -357,20 +363,25 @@ int valid_ship(int x, int y, int len, int horizontal) {
             xi = x;
             yi = y + i;
         }
+        // validate coords are within the Field
         if (xi < 0 || xi >= FIELD_SIZE || yi < 0 || yi >= FIELD_SIZE)
             return 0;
 
+        // Check all neighbouring Fields (x-1,y-1 | x, y-1 | x+1, y-1 ; etc.)
+        // When all are 0 the condition of placement is met
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
                 int nx = xi + dx;
                 int ny = yi + dy;
                 if (nx >= 0 && nx < FIELD_SIZE && ny >= 0 && ny < FIELD_SIZE) {
+                    // If != 0 there is already a ship placed
                     if (field[ny * FIELD_SIZE + nx] != 0)
                         return 0;
                 }
             }
         }
     }
+    // all neighbouring fields are 0
     return 1;
 }
 
@@ -379,21 +390,28 @@ int valid_ship(int x, int y, int len, int horizontal) {
  */
 int generate_field() {
     int tries = 0;
-    while (tries++ < 10) { // max 10 tries to generate field
+    // max 10 tries to generate field
+    while (tries++ < 10) { 
+        // resetting field if failed attempt
         for (int i = 0; i < FIELD_SIZE * FIELD_SIZE; i++)
-            field[i] = 0; // resetting field if failed attempt
+            field[i] = 0; 
 
         int placed_cells = 0;
+        // Iterate through all ship_types (2, 3, 4, 5 -> sum 4)
         for (int t = 0; t < SHIP_TYPES; t++) {
+            // Iterate through amount of each ship type
             for (int count = 0; count < ship_count[t]; count++) {
-                int len = ship_size[t];
+                // define length of each ship (2, 3, 4, 5)
+                int len = ship_size[t]; 
                 int placed = 0;
                 int attempts = 0;
-
+                // max 1000 tries to place ship on field
                 while (!placed && attempts++ < 1000) {
+                    // get a "random" number from timer 2 counter
                     uint32_t number_cnt = get_random();
                     int horizontal = number_cnt % 2; // 0 is vertical, 1 is horizontal
                     int x, y;
+                    // check if horizontal or not -> define direction of ship, either x or y
                     if(horizontal){
                         x = number_cnt % (FIELD_SIZE - len + 1);
                         y = (number_cnt >> 4) % FIELD_SIZE;
@@ -401,8 +419,9 @@ int generate_field() {
                         x = number_cnt % FIELD_SIZE;
                         y = (number_cnt >> 4) % (FIELD_SIZE - len + 1);
                     }
-
+                    // check if ship_placement is valid
                     if (valid_ship(x, y, len, horizontal)) {
+                        // if ship placement is valid the ship can be placed
                         for (int i = 0; i < len; i++) {
                             int xi, yi;
                             if (horizontal) {
@@ -602,9 +621,10 @@ void shoot2(int *x, int *y)
 /**
  * @brief updates the enemy field
  */
-void update_enemy_field(int x, int y){
+void update_enemy_field(int x, int y, char *checksum){
+    // checking for horizontal ships
     if (x > 0 && enemy_field[(x-1) + y*FIELD_SIZE] == 2) {
-        
+        // set the neighbouring fields to 1 (water)
         if (y+1 < FIELD_SIZE) enemy_field[x + (y+1)*FIELD_SIZE] = 1;
         if (x-2 >= 0) {
             if (enemy_field[x-2 + y*FIELD_SIZE] != 2) enemy_field[x-2 + y*FIELD_SIZE] = 1;
@@ -614,7 +634,9 @@ void update_enemy_field(int x, int y){
         if (y > 0 && x-1 >= 0) enemy_field[x-1 + (y-1)*FIELD_SIZE] = 1;
         if (y < FIELD_SIZE-1 && x-1 >= 0) enemy_field[x-1 + (y+1)*FIELD_SIZE] = 1;
     }
+    // checking for vertical ships
     else if (y > 0 && enemy_field[x + (y-1)*FIELD_SIZE] == 2) {
+        // set the neighbouring fields to 1 (water)
         if (x+1 < FIELD_SIZE) enemy_field[x+1 + y*FIELD_SIZE] = 1;
         if (y-2 >= 0) {
             if (enemy_field[x + (y-2)*FIELD_SIZE] != 2) enemy_field[x + (y-2)*FIELD_SIZE] = 1;
@@ -623,6 +645,39 @@ void update_enemy_field(int x, int y){
         }
         if (x > 0) enemy_field[x-1 + (y-1)*FIELD_SIZE] = 1;
         if (x < FIELD_SIZE-1) enemy_field[x+1 + (y-1)*FIELD_SIZE] = 1;
+    }
+
+    int sum = 0;
+    for(int row = 0; row < 11; row++){
+        // convert ASCII value to int
+        sum = checksum[row] - '0';
+        int count = 0;
+        for(int col = 0; col < FIELD_SIZE; col++){
+            if(enemy_field[col + row*FIELD_SIZE] == 2){
+                count++;
+                // check if marked hits equal checksum of enemy
+                if(count == sum){
+                    for(int check = 0; check < FIELD_SIZE; check++){
+                        if(enemy_field[check + row*FIELD_SIZE] == 0){
+                            enemy_field[check + row*FIELD_SIZE] = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief updates the enemy field by comparing the checksum
+ */
+void update_field_checksum(char *buffer){
+    for(int cif = 0; cif < 11; cif++){
+        if((buffer[cif]-'0') == 0){
+            for(int col = 0; col < FIELD_SIZE; col++){
+                enemy_field[col + (cif)*FIELD_SIZE] = 1;
+            }
+        }
     }
 }
 
@@ -677,6 +732,7 @@ int main(void)
 
     // Initialize checksum_str variable
     char checksum_str[11];
+    char checksum_enemy[11];
 
     // coordinates for the battlefields
     int x_received = 0;
@@ -704,7 +760,6 @@ int main(void)
         TIM3->ARR = arr_from_freq(NOTE_A);
         TIM3->CCR3 = TIM3->ARR / 2;
         
-
         uint8_t byte;
         ret = fifo_get((Fifo_t *)&usart_rx_fifo, &byte) == 0;
         if (ret)
@@ -760,7 +815,7 @@ int main(void)
         }
         // switch case for the state model
         switch (state){
-            // Receiving/sending start message
+            // Receiving/sending start message, resetting all values
             case 1:
                 LOG("DH_START_Krapfen\n");
                 TIM2->CNT = 0;
@@ -774,9 +829,13 @@ int main(void)
                 y = 0;
                 state = 0;
                 break;
-            // Sending checksum
+            // Sending checksum and saving checksum of enemy
             case 2: 
                 LOG("DH_CS_%s\n", checksum_str);
+                for(int cif = 6; cif < 17; cif++){
+                    checksum_enemy[cif-6] = match_buffer[cif];
+                }
+                update_field_checksum(checksum_enemy);
                 state = 0;
                 break;
 
@@ -813,7 +872,7 @@ int main(void)
                 {
                     // Update enemy field to mark hit
                     enemy_field[y * FIELD_SIZE + x] = 2; // 2 for hit
-                    update_enemy_field(x, y);
+                    update_enemy_field(x, y, checksum_enemy);
                     hit_counter++;
                 }
                 else
